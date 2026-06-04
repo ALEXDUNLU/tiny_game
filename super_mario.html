@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>超级马里奥 - 手机版</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: none;
+        }
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: #1a1a2e;
+            font-family: 'Courier New', monospace;
+            overflow: hidden;
+        }
+        #gameContainer {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            max-width: 800px;
+        }
+        #gameCanvas {
+            border: 3px solid #C84C0C;
+            border-radius: 4px;
+            image-rendering: pixelated;
+            width: 100%;
+            max-width: 800px;
+            aspect-ratio: 800/480;
+        }
+        #controls {
+            color: #FFD700;
+            font-size: 12px;
+            text-align: center;
+        }
+        #controls span {
+            color: #5C94FC;
+        }
+        #touchControls {
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+            padding: 0 10px;
+            margin-top: 10px;
+        }
+        .controlGroup {
+            display: flex;
+            gap: 10px;
+        }
+        .btn {
+            width: 60px;
+            height: 60px;
+            border: none;
+            border-radius: 50%;
+            background: rgba(255, 215, 0, 0.3);
+            color: #FFD700;
+            font-size: 28px;
+            font-weight: bold;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            user-select: none;
+        }
+        .btn:active {
+            background: rgba(255, 215, 0, 0.6);
+        }
+        .btnWide {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            font-size: 18px;
+        }
+        @media (max-width: 480px) {
+            .btn {
+                width: 50px;
+                height: 50px;
+                font-size: 22px;
+            }
+            .btnWide {
+                width: 70px;
+                height: 70px;
+                font-size: 16px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="800" height="480"></canvas>
+        <div id="touchControls">
+            <div class="controlGroup">
+                <button class="btn" id="btnLeft">←</button>
+                <button class="btn" id="btnRight">→</button>
+            </div>
+            <div class="controlGroup">
+                <button class="btn btnWide" id="btnJump">跳</button>
+            </div>
+        </div>
+        <div id="controls">
+            点击屏幕开始 | 重新开始请刷新页面
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // 游戏状态
+        const GameState = {
+            MENU: 'menu',
+            PLAYING: 'playing',
+            WIN: 'win',
+            GAMEOVER: 'gameover'
+        };
+
+        // 颜色配置
+        const Colors = {
+            sky: '#5C94FC',
+            ground: '#C84C0C',
+            groundTop: '#FFA044',
+            brick: '#E4A672',
+            brickDark: '#C84C0C',
+            coin: '#FFD700',
+            pipe: '#00A800',
+            pipeDark: '#007800',
+            questionBox: '#E4A672',
+            questionDark: '#C84C0C',
+            flag: '#00A800',
+            mario: '#E52521',
+            enemy: '#8B4513'
+        };
+
+        // 游戏变量
+        let gameState = GameState.MENU;
+        let score = 0;
+        let coins = 0;
+        let cameraX = 0;
+        const LEVEL_WIDTH = 3200;
+
+        // 键盘/触摸状态
+        const keys = {
+            left: false,
+            right: false,
+            up: false,
+            space: false
+        };
+
+        // 玩家对象
+        const player = {
+            x: 50,
+            y: 300,
+            width: 32,
+            height: 32,
+            vx: 0,
+            vy: 0,
+            speed: 5,
+            jumpPower: -13,
+            onGround: false,
+            direction: 1
+        };
+
+        // 地图元素
+        const TILE_SIZE = 32;
+        let platforms = [];
+        let coinsArray = [];
+        let enemies = [];
+        let questionBoxes = [];
+        let flag = null;
+
+        // 初始化关卡
+        function initLevel() {
+            platforms = [];
+            coinsArray = [];
+            enemies = [];
+            questionBoxes = [];
+            score = 0;
+            coins = 0;
+            cameraX = 0;
+
+            // 第一段：起始区域 (0-400)
+            for (let x = 0; x < 400; x += TILE_SIZE) {
+                platforms.push({ x, y: 448, width: TILE_SIZE, height: TILE_SIZE, type: 'ground' });
+            }
+            coinsArray.push({ x: 100, y: 400, width: 20, height: 20, collected: false });
+            coinsArray.push({ x: 140, y: 400, width: 20, height: 20, collected: false });
+            coinsArray.push({ x: 180, y: 400, width: 20, height: 20, collected: false });
+            enemies.push({ x: 250, y: 416, width: 28, height: 28, vx: -1, active: true });
+
+            // 第二段：管道区域 (400-800)
+            for (let x = 400; x < 800; x += TILE_SIZE) {
+                platforms.push({ x, y: 448, width: TILE_SIZE, height: TILE_SIZE, type: 'ground' });
+            }
+            platforms.push({ x: 500, y: 384, width: 64, height: 64, type: 'pipe' });
+            platforms.push({ x: 650, y: 384, width: 64, height: 64, type: 'pipe' });
+            coinsArray.push({ x: 540, y: 340, width: 20, height: 20, collected: false });
+            coinsArray.push({ x: 700, y: 340, width: 20, height: 20, collected: false });
+            enemies.push({ x: 550, y: 416, width: 28, height: 28, vx: 1, active: true });
+            enemies.push({ x: 720, y: 416, width: 28, height: 28, vx: -1, active: true });
+
+            // 第三段：砖块平台区 (800-1200)
+            for (let x = 800; x < 1200; x += TILE_SIZE) {
+                platforms.push({ x, y: 448, width: TILE_SIZE, height: TILE_SIZE, type: 'ground' });
+            }
+            for (let x = 850; x < 950; x += TILE_SIZE) {
+                platforms.push({ x, y: 352, width: TILE_SIZE, height: TILE_SIZE, type: 'brick' });
+            }
+            questionBoxes.push({ x: 880, y: 288, width: TILE_SIZE, height: TILE_SIZE, hit: false });
+            coinsArray.push({ x: 890, y: 250, width: 20, height: 20, collected: false });
+            for (let x = 1000; x < 1100; x += TILE_SIZE) {
+                platforms.push({ x, y: 320, width: TILE_SIZE, height: TILE_SIZE, type: 'brick' });
+            }
+            coinsArray.push({ x: 1030, y: 280, width: 20, height: 20, collected: false });
+            enemies.push({ x: 900, y: 416, width: 28, height: 28, vx: 1, active: true });
+            enemies.push({ x: 1050, y: 416, width: 28, height: 28, vx: -1, active: true });
+
+            // 第四段：地形起伏区 (1200-1600)
+            for (let x = 1200; x < 1600; x += TILE_SIZE) {
+                platforms.push({ x, y: 448, width: TILE_SIZE, height: TILE_SIZE, type: 'ground' });
+            }
+            platforms.push({ x: 1300, y: 480, width: TILE_SIZE, height: TILE_SIZE, type: 'ground' });
+            platforms.push({ x: 1332, y: 480, width: TILE_SIZE, height: TILE_SIZE, type: 'ground' });
+            platforms.push({ x: 1364, y: 480, width: TILE_SIZE, height: TILE_SIZE, type: 'ground' });
+            platforms.push({ x: 1300, y: 448, width: TILE_SIZE * 3, height: TILE_SIZE, type: 'ground' });
+            platforms.push({ x: 1450, y: 384, width: 64, height: 64, type: 'pipe' });
+            coinsArray.push({ x: 1320, y: 400, width: 20, height: 20, collected: false });
+            coinsArray.push({ x: 1380, y: 400, width: 20, height: 20, collected: false });
+            enemies.push({ x: 1350, y: 416, width: 28, height: 28, vx: -1, active: true });
+            enemies.push({ x: 1500, y: 416, width: 28, height: 28, vx: 1, active: true });
+
+            // 第五段：高台跳跃区 (1600-2000)
+            for (let x = 1600; x < 2000; x += TILE_SIZE) {
+                platforms.push({ x, y: 448, width: TILE_SIZE, height: TILE_SIZE, type: 'ground' });
+            }
+            platforms.push({ x: 1700, y: 384, width: TILE_SIZE * 2, height: TILE_SIZE, type: 'brick' });
+            platforms.push({ x: 1800, y: 320, width: TILE_SIZE * 2, height: TILE_SIZE, type: 'brick' });
+            platforms.push({ x: 1900, y: 256, width: TILE_SIZE * 2, height: TILE_SIZE, type: 'brick' });
+            questionBoxes.push({ x: 1820, y: 256, width: TILE_SIZE, height: TILE_SIZE, hit: false });
+            coinsArray.push({ x: 1730, y: 340, width: 20, height: 20, collected: false });
+            coinsArray.push({ x: 1830, y: 276, width: 20, height: 20, collected: false });
+            coinsArray.push({ x: 1930, y: 212, width: 20, height: 20, collected: false });
+            enemies.push({ x: 1750, y: 416, width: 28, height: 28, vx: 1, active: true });
+            enemies.push({ x: 1850, y: 352, width: 28, height: 28, vx: -1, active: true });
+
+            // 第六段：长管道区 (2000-2400)
+            for (let x = 2000; x < 2400; x += TILE_SIZE) {
+                platforms.push({ x, y: 448, width: TILE_SIZE, height: TILE_SIZE, type: 'ground' });
+            }
+            platforms.push({ x: 2100, y: 352, width: 64, height: 96, type: 'pipe' });
+            platforms.push({ x: 2200, y: 320, width: 64, height: 128, type: 'pipe' });
+            coinsArray.push({ x: 2120, y: 300, width: 20, height: 20, collected: false });
+            coinsArray.push({ x: 2220, y: 268, width: 20, height: 20, collected: false });
+            coinsArray.push({ x: 2260, y: 268, width: 20, height: 20, collected: false });
+            enemies.push({ x: 2150, y: 416, width: 28, height: 28, vx: -1, active: true });
+            enemies.push({ x: 2300, y: 416, width: 28, height: 28, vx: 1, active: true });
+
+            // 第七段：最后冲刺区 (2400-2800)
+            for (let x = 2400; x < 2800; x += TILE_SIZE) {
+                platforms.push({ x, y: 448, width: TILE_SIZE, height: TILE_SIZE, type: 'ground' });
+            }
+            for (let x = 2500; x < 2700; x += TILE_SIZE) {
+                platforms.push({ x, y: 352, width: TILE_SIZE, height: TILE_SIZE, type: 'brick' });
+            }
+            questionBoxes.push({ x: 2520, y: 288, width: TILE_SIZE, height: TILE_SIZE, hit: false });
+            questionBoxes.push({ x: 2600, y: 288, width: TILE_SIZE, height: TILE_SIZE, hit: false });
+            coinsArray.push({ x: 2540, y: 308, width: 20, height: 20, collected: false });
+            coinsArray.push({ x: 2620, y: 308, width: 20, height: 20, collected: false });
+            coinsArray.push({ x: 2660, y: 308, width: 20, height: 20, collected: false });
+            enemies.push({ x: 2550, y: 416, width: 28, height: 28, vx: 1, active: true });
+            enemies.push({ x: 2700, y: 416, width: 28, height: 28, vx: -1, active: true });
+
+            // 第八段：终点区域 (2800-3200)
+            for (let x = 2800; x < 3200; x += TILE_SIZE) {
+                platforms.push({ x, y: 448, width: TILE_SIZE, height: TILE_SIZE, type: 'ground' });
+            }
+            platforms.push({ x: 2950, y: 384, width: 64, height: 64, type: 'pipe' });
+
+            flag = { x: 3100, y: 224, width: 16, height: 224 };
+
+            coinsArray.push({ x: 2850, y: 400, width: 20, height: 20, collected: false });
+            coinsArray.push({ x: 2890, y: 400, width: 20, height: 20, collected: false });
+            coinsArray.push({ x: 3000, y: 400, width: 20, height: 20, collected: false });
+
+            player.x = 50;
+            player.y = 300;
+            player.vx = 0;
+            player.vy = 0;
+            player.onGround = false;
+        }
+
+        // 绘制背景
+        function drawBackground() {
+            ctx.fillStyle = Colors.sky;
+            ctx.fillRect(0, 0, LEVEL_WIDTH, canvas.height);
+
+            ctx.fillStyle = '#FFFFFF';
+            drawCloud(100, 60);
+            drawCloud(300, 100);
+            drawCloud(550, 50);
+            drawCloud(700, 80);
+            drawCloud(1000, 70);
+            drawCloud(1300, 90);
+            drawCloud(1600, 55);
+            drawCloud(1900, 75);
+            drawCloud(2200, 60);
+            drawCloud(2500, 85);
+            drawCloud(2800, 65);
+            drawCloud(3000, 95);
+        }
+
+        function drawCloud(x, y) {
+            ctx.beginPath();
+            ctx.arc(x, y, 20, 0, Math.PI * 2);
+            ctx.arc(x + 25, y - 10, 25, 0, Math.PI * 2);
+            ctx.arc(x + 50, y, 20, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        function drawGround() {
+            platforms.forEach(p => {
+                if (p.type === 'ground') {
+                    ctx.fillStyle = Colors.ground;
+                    ctx.fillRect(p.x, p.y, p.width, p.height);
+                    ctx.fillStyle = Colors.groundTop;
+                    ctx.fillRect(p.x, p.y, p.width, 8);
+                }
+            });
+        }
+
+        function drawPipe(p) {
+            ctx.fillStyle = Colors.pipe;
+            ctx.fillRect(p.x, p.y, p.width, p.height);
+            ctx.fillStyle = Colors.pipeDark;
+            ctx.fillRect(p.x, p.y + p.height - 10, p.width, 10);
+            ctx.fillRect(p.x + 4, p.y, 8, p.height);
+            ctx.fillStyle = '#00D000';
+            ctx.fillRect(p.x + 8, p.y + 4, 4, 4);
+        }
+
+        function drawBrick(p) {
+            ctx.fillStyle = Colors.brick;
+            ctx.fillRect(p.x, p.y, p.width, p.height);
+            ctx.fillStyle = Colors.brickDark;
+            ctx.fillRect(p.x, p.y, p.width, 4);
+            ctx.fillRect(p.x, p.y + 14, p.width, 4);
+            ctx.fillRect(p.x + 15, p.y, 4, p.height);
+        }
+
+        function drawQuestionBox(q) {
+            ctx.fillStyle = Colors.questionBox;
+            ctx.fillRect(q.x, q.y, q.width, q.height);
+            ctx.fillStyle = Colors.questionDark;
+            ctx.fillRect(q.x, q.y, q.width, 4);
+            ctx.fillRect(q.x, q.y + 14, q.width, 4);
+            ctx.fillRect(q.x + 15, q.y, 4, q.height);
+
+            ctx.fillStyle = q.hit ? '#000' : '#FFD700';
+            ctx.font = 'bold 20px Arial';
+            ctx.fillText(q.hit ? '' : '?', q.x + 10, q.y + 24);
+        }
+
+        function drawPlayer() {
+            ctx.save();
+            ctx.translate(player.x + player.width / 2, player.y + player.height / 2);
+            ctx.scale(player.direction, 1);
+            ctx.translate(-player.width / 2, -player.height / 2);
+
+            ctx.fillStyle = Colors.mario;
+            ctx.fillRect(8, 8, 16, 16);
+            ctx.fillStyle = '#FFDAB9';
+            ctx.fillRect(8, 0, 16, 10);
+            ctx.fillStyle = Colors.mario;
+            ctx.fillRect(4, 0, 20, 6);
+            ctx.fillRect(0, 4, 8, 6);
+            ctx.fillStyle = '#000';
+            ctx.fillRect(18, 4, 4, 4);
+
+            ctx.restore();
+        }
+
+        function drawEnemy(e) {
+            if (!e.active) return;
+
+            ctx.fillStyle = Colors.enemy;
+            ctx.fillRect(e.x + 2, e.y + 8, e.width - 4, e.height - 8);
+            ctx.fillRect(e.x, e.y, e.width, 12);
+
+            ctx.fillStyle = '#FFF';
+            ctx.fillRect(e.x + 4, e.y + 4, 6, 6);
+            ctx.fillRect(e.x + 14, e.y + 4, 6, 6);
+            ctx.fillStyle = '#000';
+            ctx.fillRect(e.x + 6, e.y + 6, 3, 3);
+            ctx.fillRect(e.x + 16, e.y + 6, 3, 3);
+
+            ctx.fillStyle = '#000';
+            ctx.fillRect(e.x + 2, e.y + 22, 8, 6);
+            ctx.fillRect(e.x + 16, e.y + 22, 8, 6);
+        }
+
+        function drawCoin(c) {
+            if (c.collected) return;
+
+            ctx.fillStyle = Colors.coin;
+            ctx.beginPath();
+            ctx.arc(c.x + c.width / 2, c.y + c.height / 2, c.width / 2, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = '#DAA520';
+            ctx.beginPath();
+            ctx.arc(c.x + c.width / 2, c.y + c.height / 2, c.width / 3, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        function drawFlag() {
+            if (!flag) return;
+
+            ctx.fillStyle = '#8B4513';
+            ctx.fillRect(flag.x, flag.y, flag.width, flag.height);
+
+            ctx.fillStyle = Colors.flag;
+            ctx.fillRect(flag.x - 30, flag.y, 30, 40);
+
+            ctx.fillStyle = '#FFD700';
+            ctx.beginPath();
+            ctx.arc(flag.x + flag.width / 2, flag.y, 10, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        function drawUI() {
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, 32);
+
+            ctx.fillStyle = '#FFF';
+            ctx.font = 'bold 18px Courier New';
+            ctx.fillText(`分数: ${score}`, 20, 24);
+            ctx.fillText(`金币: ${coins}`, 200, 24);
+        }
+
+        function drawMenu() {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.fillStyle = '#E52521';
+            ctx.font = 'bold 36px Courier New';
+            ctx.fillText('超级马里奥', canvas.width / 2 - 120, 160);
+
+            ctx.fillStyle = '#FFD700';
+            ctx.font = 'bold 20px Courier New';
+            ctx.fillText('手机版', canvas.width / 2 - 45, 200);
+
+            ctx.fillStyle = '#FFF';
+            ctx.font = '18px Courier New';
+            ctx.fillText('点击任意位置开始', canvas.width / 2 - 110, 300);
+        }
+
+        function drawWin() {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.fillStyle = '#00A800';
+            ctx.font = 'bold 40px Courier New';
+            ctx.fillText('你赢了!', canvas.width / 2 - 70, 160);
+
+            ctx.fillStyle = '#FFD700';
+            ctx.font = 'bold 24px Courier New';
+            ctx.fillText(`最终得分: ${score}`, canvas.width / 2 - 90, 230);
+            ctx.fillText(`金币: ${coins}`, canvas.width / 2 - 50, 270);
+
+            ctx.fillStyle = '#FFF';
+            ctx.font = '16px Courier New';
+            ctx.fillText('刷新页面重新开始', canvas.width / 2 - 85, 350);
+        }
+
+        function drawGameOver() {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.fillStyle = '#E52521';
+            ctx.font = 'bold 40px Courier New';
+            ctx.fillText('游戏结束', canvas.width / 2 - 90, 180);
+
+            ctx.fillStyle = '#FFD700';
+            ctx.font = 'bold 24px Courier New';
+            ctx.fillText(`得分: ${score}`, canvas.width / 2 - 60, 250);
+
+            ctx.fillStyle = '#FFF';
+            ctx.font = '16px Courier New';
+            ctx.fillText('刷新页面重新开始', canvas.width / 2 - 85, 330);
+        }
+
+        function checkCollision(rect1, rect2) {
+            return rect1.x < rect2.x + rect2.width &&
+                   rect1.x + rect1.width > rect2.x &&
+                   rect1.y < rect2.y + rect2.height &&
+                   rect1.y + rect1.height > rect2.y;
+        }
+
+        function updatePlayer() {
+            if (keys.left) {
+                player.vx = -player.speed;
+                player.direction = -1;
+            } else if (keys.right) {
+                player.vx = player.speed;
+                player.direction = 1;
+            } else {
+                player.vx = 0;
+            }
+
+            if ((keys.up || keys.space) && player.onGround) {
+                player.vy = player.jumpPower;
+                player.onGround = false;
+            }
+
+            player.vy += 0.5;
+            if (player.vy > 10) player.vy = 10;
+
+            player.x += player.vx;
+            player.y += player.vy;
+
+            if (player.x < 0) player.x = 0;
+            if (player.x + player.width > LEVEL_WIDTH) player.x = LEVEL_WIDTH - player.width;
+
+            player.onGround = false;
+            platforms.forEach(p => {
+                if (checkCollision(player, p)) {
+                    if (player.vy > 0 && player.y + player.height - player.vy <= p.y + 5) {
+                        player.y = p.y - player.height;
+                        player.vy = 0;
+                        player.onGround = true;
+                    } else if (player.vy < 0 && player.y - player.vy >= p.y + p.height - 5) {
+                        player.y = p.y + p.height;
+                        player.vy = 0;
+                    } else {
+                        if (player.vx > 0) {
+                            player.x = p.x - player.width;
+                        } else if (player.vx < 0) {
+                            player.x = p.x + p.width;
+                        }
+                    }
+                }
+            });
+
+            questionBoxes.forEach(q => {
+                if (!q.hit && checkCollision(player, q)) {
+                    if (player.vy < 0 && player.y - player.vy >= q.y + q.height - 5) {
+                        q.hit = true;
+                        coins++;
+                        score += 100;
+                        player.y = q.y + q.height;
+                        player.vy = 0;
+                    }
+                }
+            });
+
+            coinsArray.forEach(c => {
+                if (!c.collected && checkCollision(player, c)) {
+                    c.collected = true;
+                    coins++;
+                    score += 100;
+                }
+            });
+
+            if (player.y > canvas.height) {
+                gameState = GameState.GAMEOVER;
+            }
+
+            if (flag && checkCollision(player, flag)) {
+                score += 1000;
+                gameState = GameState.WIN;
+            }
+
+            const targetCameraX = player.x - canvas.width / 3;
+            cameraX += (targetCameraX - cameraX) * 0.1;
+            if (cameraX < 0) cameraX = 0;
+            if (cameraX > LEVEL_WIDTH - canvas.width) cameraX = LEVEL_WIDTH - canvas.width;
+        }
+
+        function updateEnemies() {
+            enemies.forEach(e => {
+                if (!e.active) return;
+
+                e.x += e.vx;
+                if (e.x <= 0 || e.x + e.width >= LEVEL_WIDTH) {
+                    e.vx = -e.vx;
+                }
+
+                if (checkCollision(player, e)) {
+                    if (player.vy > 0 && player.y + player.height - player.vy < e.y + 10) {
+                        e.active = false;
+                        player.vy = -8;
+                        score += 200;
+                    } else {
+                        gameState = GameState.GAMEOVER;
+                    }
+                }
+            });
+        }
+
+        function update() {
+            if (gameState !== GameState.PLAYING) return;
+
+            updatePlayer();
+            updateEnemies();
+        }
+
+        function render() {
+            ctx.save();
+            ctx.translate(-cameraX, 0);
+
+            drawBackground();
+            drawGround();
+
+            platforms.forEach(p => {
+                if (p.type === 'pipe') drawPipe(p);
+                else if (p.type === 'brick') drawBrick(p);
+            });
+
+            questionBoxes.forEach(q => drawQuestionBox(q));
+            coinsArray.forEach(c => drawCoin(c));
+            drawFlag();
+            enemies.forEach(e => drawEnemy(e));
+            drawPlayer();
+
+            ctx.restore();
+            drawUI();
+
+            if (gameState === GameState.MENU) drawMenu();
+            else if (gameState === GameState.WIN) drawWin();
+            else if (gameState === GameState.GAMEOVER) drawGameOver();
+        }
+
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // 触摸事件
+        const btnLeft = document.getElementById('btnLeft');
+        const btnRight = document.getElementById('btnRight');
+        const btnJump = document.getElementById('btnJump');
+
+        btnLeft.addEventListener('touchstart', (e) => { e.preventDefault(); keys.left = true; });
+        btnLeft.addEventListener('touchend', (e) => { e.preventDefault(); keys.left = false; });
+        btnLeft.addEventListener('mousedown', (e) => { keys.left = true; });
+        btnLeft.addEventListener('mouseup', (e) => { keys.left = false; });
+        btnLeft.addEventListener('mouseleave', (e) => { keys.left = false; });
+
+        btnRight.addEventListener('touchstart', (e) => { e.preventDefault(); keys.right = true; });
+        btnRight.addEventListener('touchend', (e) => { e.preventDefault(); keys.right = false; });
+        btnRight.addEventListener('mousedown', (e) => { keys.right = true; });
+        btnRight.addEventListener('mouseup', (e) => { keys.right = false; });
+        btnRight.addEventListener('mouseleave', (e) => { keys.right = false; });
+
+        btnJump.addEventListener('touchstart', (e) => { e.preventDefault(); keys.space = true; });
+        btnJump.addEventListener('touchend', (e) => { e.preventDefault(); keys.space = false; });
+        btnJump.addEventListener('mousedown', (e) => { keys.space = true; });
+        btnJump.addEventListener('mouseup', (e) => { keys.space = false; });
+        btnJump.addEventListener('mouseleave', (e) => { keys.space = false; });
+
+        // 屏幕点击开始游戏
+        canvas.addEventListener('touchstart', (e) => {
+            if (gameState === GameState.MENU) {
+                initLevel();
+                gameState = GameState.PLAYING;
+            }
+        });
+        canvas.addEventListener('click', (e) => {
+            if (gameState === GameState.MENU) {
+                initLevel();
+                gameState = GameState.PLAYING;
+            }
+        });
+
+        // 防止双击缩放
+        let lastTouchEnd = 0;
+        document.addEventListener('touchend', (e) => {
+            const now = Date.now();
+            if (now - lastTouchEnd <= 300) {
+                e.preventDefault();
+            }
+            lastTouchEnd = now;
+        }, false);
+
+        initLevel();
+        gameLoop();
+    </script>
+</body>
+</html>
